@@ -1,0 +1,6 @@
+ccxt==2.98.1
+websocket-client==1.6.1
+numpy==1.24.0
+pandas==1.5.0
+python-dotenv==1.0.0
+requests==2.31.0
