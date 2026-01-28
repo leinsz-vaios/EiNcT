@@ -1,6 +1,9 @@
+import warnings
+# Ignore the specific DeprecationWarning about utcnow
+warnings.filterwarnings(action="ignore", message="datetime.datetime.utcnow()")
+import datetime
 import os
 import time
-import datetime
 import logging
 import requests
 import numpy as np
@@ -77,7 +80,7 @@ class PocketOptionBot:
         df['fvg_down'] = (df['high'] < df['low'].shift(2))
 
         # 3. Session check (basic): only trade London/NY hours UTC
-        now = datetime.datetime.utcnow().hour
+        now = datetime.datetime.now(datetime.UTC).hour
         session_ok = (7 <= now <= 17)
 
         # 4. Signal generation:
