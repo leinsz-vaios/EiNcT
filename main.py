@@ -1,6 +1,6 @@
 import warnings
 # Ignore the specific DeprecationWarning about utcnow
-warnings.filterwarnings(action="ignore", message="datetime.datetime.utcnow()")
+warnings.filterwarnings(action="ignore", message="datetime.datetime.now(datetime.UTC)")
 import datetime
 import os
 import time
