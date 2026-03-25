@@ -139,15 +139,28 @@ class PocketOptionBot:
         return mapping[symbol]
 
     def sync_balance_from_pocket_option(self):
-    if not self.po_client:
-        return
-    try:
-        bal = self.po_client.get_balance(mode=config.PO_ACCOUNT_MODE)
-        self.balance = float(bal)
-        self.start_of_day_balance = self.balance
-        logging.info("Synced Pocket Option %s balance: $%.2f", config.PO_ACCOUNT_MODE, self.balance)
-    except Exception as exc:
-        logging.warning("Could not sync Pocket Option balance: %s", exc)
+        if self.po_client:
+            try:
+                bal = self.po_client.get_balance(mode=config.PO_ACCOUNT_MODE)
+                self.balance = float(bal)
+                self.start_of_day_balance = self.balance
+                logging.info("Synced Pocket Option %s balance: $%.2f", config.PO_ACCOUNT_MODE, self.balance)
+                return
+            except Exception as exc:
+                logging.warning("Could not sync Pocket Option balance: %s", exc)
+
+        if not config.PO_BALANCE_API:
+            return
+        try:
+            resp = requests.get(config.PO_BALANCE_API, timeout=8)
+            resp.raise_for_status()
+            payload = resp.json()
+            if 'balance' in payload:
+                self.balance = float(payload['balance'])
+                self.start_of_day_balance = self.balance
+                logging.info("Synced fallback balance endpoint: $%.2f", self.balance)
+        except Exception as exc:
+            logging.warning("Could not sync fallback balance endpoint: %s", exc)
 
     def load_ai_model(self):
         if not self.enable_ai_filter:
