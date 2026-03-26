@@ -60,7 +60,7 @@ if __name__ == '__main__':
     ]
 
     out = {
-        'generated_at_utc': __import__('datetime').datetime.utcnow().isoformat() + 'Z',
+        'generated_at_utc': __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
         'video_sources': args.video,
         'document_sources': [d['path'] for d in docs],
         'strategy_items': strategy_items,

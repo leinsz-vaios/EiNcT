@@ -90,6 +90,7 @@ class PocketOptionBot:
         self.max_trades = config.MAX_TRADES_PER_DAY
         self.min_signal_score = config.MIN_SIGNAL_SCORE
         self.max_daily_drawdown_pct = config.MAX_DAILY_DRAWDOWN_PCT
+        self.max_trades_per_day = config.MAX_TRADES_PER_DAY
         self.trade_cooldown_minutes = config.TRADE_COOLDOWN_MINUTES
         self.market_data_limit = config.MARKET_DATA_LIMIT
         self.max_account_use_per_trade_pct = config.MAX_ACCOUNT_USE_PER_TRADE_PCT
@@ -120,7 +121,7 @@ class PocketOptionBot:
         self.model = self.load_ai_model()
         self.exchange = ccxt.binance()
         self.po_client = None
-        if config.PO_API_TOKEN:
+        if config.PO_BASE_URL and config.PO_API_TOKEN:
             self.po_client = PocketOptionClient(config.PO_BASE_URL, config.PO_API_TOKEN)
 
     @property
@@ -260,11 +261,6 @@ class PocketOptionBot:
         out['vol_ma'] = out['volume'].rolling(20).mean()
         return out
 
-    def fetch_account_balance(self):
-        # In real application, fetch via Pocket Option API (or WebSocket/HTTP endpoint if available)
-        # For now, DEMO ONLY!
-        logging.info(f"Simulated balance check: ${self.balance:.2f}")
-        return self.balance
     def _ai_probability_up(self, latest_row):
         if self.model is None:
             return None
@@ -305,6 +301,11 @@ class PocketOptionBot:
         work['fvg_down'] = work['high'] < work['low'].shift(2)
         latest = work.iloc[-1]
 
+    def fetch_account_balance(self):
+        # In real application, fetch via Pocket Option API (or WebSocket/HTTP endpoint if available)
+        # For now, DEMO ONLY!
+        logging.info(f"Simulated balance check: ${self.balance:.2f}")
+        return self.balance
         bullish_score = int(any(work['s_low'].tail(5))) * 2 + int(any(work['fvg_up'].tail(3))) * 2
         bullish_score += int(latest['ema_fast'] > latest['ema_slow']) * 2 + int(45 <= latest['rsi'] <= 65)
         bearish_score = int(any(work['s_high'].tail(5))) * 2 + int(any(work['fvg_down'].tail(3))) * 2
@@ -390,17 +391,6 @@ class PocketOptionBot:
     def trade(self, pair, direction, size):
         # Simulate placing a trade via API.
         self.fetch_account_balance()  # refresh
-        if self.demo_mode:
-            # "Place" the trade and simulate instant result (for demo)
-            self.daily_trade_count += 1
-            change = np.random.uniform(0.75, 1.15) if direction == 'buy' else np.random.uniform(0.75, 1.15) * -1
-            profit = size * change
-            self.balance += profit
-            outcome = "Profit" if profit > 0 else "Loss"
-            logging.info(f"TRADE: {pair} | {direction.upper()} | Size {size} | {outcome} ${abs(profit):.2f} | New Balance: ${self.balance:.2f}")
-        else:
-            # Here you integrate a real API call to Pocket Option's live websocket (not demo)
-            logging.info("LIVE trade function NOT IMPLEMENTED in this demo bot.")
         max_size_by_account_use = self.balance * (self.max_account_use_per_trade_pct / 100)
         return round(min(size, max_size_by_account_use), 6)
 
@@ -496,6 +486,25 @@ class PocketOptionBot:
         hour_ok = int(hour) in top['Time_of_Day'].astype(int).tolist()
         return pair_ok and state_ok and hour_ok
 
+    def execute_live_order(self, pair, direction, stake):
+        if not self.po_client:
+            raise RuntimeError('PO client not configured. Set PO_BASE_URL and PO_API_TOKEN.')
+
+        order_id = self.po_client.place_order(
+            symbol=pair,
+            direction=direction,
+            amount=stake,
+            duration_sec=config.PO_ORDER_DURATION_SEC,
+            mode=config.PO_ACCOUNT_MODE,
+        )
+        result = self.po_client.wait_for_result(
+            order_id,
+            poll_interval_sec=config.PO_POLL_INTERVAL_SEC,
+            max_wait_sec=max(180, config.PO_ORDER_DURATION_SEC * 4),
+        )
+        profit = float(result.get('profit', 0.0))
+        return profit
+
     def execute_trade(self, pair, direction, size, latest_row, entry, stop, market_state, entry_setup):
         self.daily_trade_count += 1
         stake = min(size, self.balance * (self.max_account_use_per_trade_pct / 100))
@@ -503,8 +512,23 @@ class PocketOptionBot:
 
         hold_minutes = np.random.randint(1, 15)
         spread_pips = np.random.uniform(0.5, 2.5)
-        pnl_raw = stake * np.random.normal(loc=0.05, scale=0.35)
-        profit = max(pnl_raw, -stop_loss_cap)
+
+        if self.demo_mode:
+            # "Place" the trade and simulate instant result (for demo)
+            self.daily_trade_count += 1
+            change = np.random.uniform(0.75, 1.15) if direction == 'buy' else np.random.uniform(0.75, 1.15) * -1
+            profit = size * change
+            self.balance += profit
+            outcome = "Profit" if profit > 0 else "Loss"
+            logging.info(f"TRADE: {pair} | {direction.upper()} | Size {size} | {outcome} ${abs(profit):.2f} | New Balance: ${self.balance:.2f}")
+            pnl_raw = stake * np.random.normal(loc=0.05, scale=0.35)
+            profit = max(pnl_raw, -stop_loss_cap)
+        else:
+            # Here you integrate a real API call to Pocket Option's live websocket (not demo)
+            logging.info("LIVE trade function NOT IMPLEMENTED in this demo bot.")
+            profit = self.execute_live_order(pair, direction, stake)
+            profit = max(profit, -stop_loss_cap)
+
         self.balance += profit
         self.last_trade_time = datetime.datetime.now(datetime.timezone.utc)
 
@@ -522,7 +546,7 @@ class PocketOptionBot:
             'size': round(float(stake), 6),
             'profit': round(float(profit), 6),
             'balance_after': round(float(self.balance), 6),
-            'source': 'live_demo',
+            'source': 'live_demo' if self.demo_mode else 'live',
             'won': 1 if profit > 0 else 0,
             'Market_State': market_state,
             'Time_of_Day': self.last_trade_time.hour,
@@ -576,6 +600,11 @@ class PocketOptionBot:
             if self.daily_trade_count >= self.max_trades:
                 logging.info(f"Trade cap hit for today ({self.max_trades} trades). Sleeping until tomorrow.")
                 time.sleep(60 * 60 * 2)
+            if self.daily_trade_count >= self.max_trades_per_day:
+                logging.info("Daily trade cap reached (%s). Sleeping before next cycle.", self.max_trades_per_day)
+                time.sleep(60 * 30)
+                continue
+            self.ensure_api_freshness()
             if not self.ensure_daily_strategy_review():
                 logging.warning("Strategy review not completed; waiting.")
                 time.sleep(60)
@@ -584,7 +613,6 @@ class PocketOptionBot:
                 logging.info("Phase trade cap reached (%s).", self.phase_trade_cap)
                 time.sleep(60 * 30)
                 continue
-            self.ensure_api_freshness()
             if ((self.start_of_day_balance - self.balance) / max(self.start_of_day_balance, 1e-9)) * 100 >= self.max_daily_drawdown_pct:
                 logging.warning("Daily drawdown cap reached.")
                 time.sleep(60 * 30)
@@ -607,6 +635,11 @@ class PocketOptionBot:
                     if self.daily_trade_count < self.max_trades:
                         self.trade(pair, direction, size)
                 if self.daily_trade_count >= self.max_trades:
+                if self.daily_trade_count >= self.max_trades_per_day:
+                    logging.info("Daily trade cap reached (%s).", self.max_trades_per_day)
+                    break
+            time.sleep(120)  # align with 2min candle (demo frequency)
+
                 try:
                     df = self.get_market_data(pair, timeframe='1m', limit=max(120, self.market_data_limit))
                     mtf = self.get_multi_timeframe_snapshot(pair, limit=100)
@@ -640,7 +673,6 @@ class PocketOptionBot:
                 self.execute_trade(pair, direction, size, df.iloc[-1], entry, stop, market_state, entry_setup)
                 if not self.can_trade_by_phase():
                     break
-            time.sleep(120)  # align with 2min candle (demo frequency)
 
             time.sleep(120)
 
@@ -650,7 +682,7 @@ def parse_args():
     parser.add_argument('--mode', choices=['run', 'backtest', 'report'], default='run')
     parser.add_argument('--bars', type=int, default=800)
     parser.add_argument('--payout', type=float, default=0.82)
-    parser.add_argument('--source', choices=['all', 'live_demo', 'backtest'], default='all')
+    parser.add_argument('--source', choices=['all', 'live_demo', 'live', 'backtest'], default='all')
     return parser.parse_args()
 
 

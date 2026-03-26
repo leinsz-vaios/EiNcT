@@ -1,8 +1,8 @@
 import os
 
 # Pull settings from environment variables for flexibility & sec
-PO_EMAIL = os.getenv('okwakolvictor5@gmail.com')
-PO_PASSWORD = os.getenv('okwaksvictor25112008')
+PO_EMAIL = os.getenv('PO_EMAIL')
+PO_PASSWORD = os.getenv('PO_PASSWORD')
 DEMO_MODE = os.getenv('DEMO_MODE', 'True').lower() == 'true'
 
 PO_API_WSS = os.getenv('PO_API_WSS')
@@ -21,7 +21,7 @@ MARKET_DATA_LIMIT = int(os.getenv('MARKET_DATA_LIMIT', '240'))
 
 PAIRS = ['EURUSD', 'GBPUSD']
 TIMEFRAME = '2m'
-START_BALANCE = 10  # Default demo balance
+START_BALANCE = 1000  # Default demo balance
 # Spec-driven controls
 MAX_ACCOUNT_USE_PER_TRADE_PCT = float(os.getenv('MAX_ACCOUNT_USE_PER_TRADE_PCT', '25'))
 STOP_LOSS_STAKE_PCT = float(os.getenv('STOP_LOSS_STAKE_PCT', '40'))
@@ -46,4 +46,4 @@ STRATEGY_REVIEW_STATE_PATH = os.getenv('STRATEGY_REVIEW_STATE_PATH', 'strategy_r
 PAIRS = ['EURUSD', 'GBPUSD']
 TIMEFRAME = '1m'
 HIGHER_TIMEFRAMES = ['1w', '1d', '4h', '1h']
-START_BALANCE = 10
+START_BALANCE = 1000
