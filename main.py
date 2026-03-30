@@ -4,6 +4,7 @@ warnings.filterwarnings(action="ignore", message="datetime.datetime.now(datetime
 import argparse
 import csv
 import datetime
+import inspect
 import json
 import logging
 import os
@@ -119,7 +120,7 @@ class PocketOptionBot:
         self.ws = None  # Will hold the websocket connection
         self.last_trade_time = None
         self.model = self.load_ai_model()
-        self.exchange = ccxt.kraken()
+        self.exchange = ccxt.binance()
         self.po_client = None
         if config.PO_BASE_URL and config.PO_API_TOKEN:
             self.po_client = PocketOptionClient(config.PO_BASE_URL, config.PO_API_TOKEN)
@@ -240,8 +241,15 @@ class PocketOptionBot:
     def get_multi_timeframe_snapshot(self, symbol, limit=100):
         snapshots = {}
         for tf in config.HIGHER_TIMEFRAMES:
-            snapshots[tf] = self.get_market_data(symbol, timeframe=tf, limit=limit)
+            snapshots[tf] = self.fetch_market_data_compat(symbol, timeframe=tf, limit=limit)
         return snapshots
+
+    def fetch_market_data_compat(self, symbol, timeframe='1m', limit=240):
+        params = inspect.signature(self.get_market_data).parameters
+        if 'timeframe' in params:
+            return self.get_market_data(symbol, timeframe=timeframe, limit=limit)
+        logging.warning("Detected legacy get_market_data signature; ignoring timeframe=%s for %s", timeframe, symbol)
+        return self.get_market_data(symbol, limit=limit)
 
     def enrich_market_data(self, df):
         out = df.copy()
@@ -294,6 +302,14 @@ class PocketOptionBot:
         return None
 
     def analyze_ict(self, df, mtf_bias=None, log_signal=True):
+        if df is None or len(df) == 0:
+            logging.warning("analyze_ict received empty market data; skipping signal evaluation.")
+            return None
+        required_cols = {'high', 'low', 'close', 'ema_fast', 'ema_slow', 'rsi'}
+        if not required_cols.issubset(df.columns):
+            logging.warning("analyze_ict missing required columns (%s); got=%s", sorted(required_cols), list(df.columns))
+            return None
+
         work = df.copy()
         work['s_high'] = (work['high'].shift(2) < work['high'].shift(1)) & (work['high'].shift(1) > work['high'])
         work['s_low'] = (work['low'].shift(2) > work['low'].shift(1)) & (work['low'].shift(1) < work['low'])
@@ -301,16 +317,16 @@ class PocketOptionBot:
         work['fvg_down'] = work['high'] < work['low'].shift(2)
         latest = work.iloc[-1]
 
-    def fetch_account_balance(self):
-        # In real application, fetch via Pocket Option API (or WebSocket/HTTP endpoint if available)
-        # For now, DEMO ONLY!
-        logging.info(f"Simulated balance check: ${self.balance:.2f}")
-        return self.balance
         bullish_score = int(any(work['s_low'].tail(5))) * 2 + int(any(work['fvg_up'].tail(3))) * 2
         bullish_score += int(latest['ema_fast'] > latest['ema_slow']) * 2 + int(45 <= latest['rsi'] <= 65)
         bearish_score = int(any(work['s_high'].tail(5))) * 2 + int(any(work['fvg_down'].tail(3))) * 2
         bearish_score += int(latest['ema_fast'] < latest['ema_slow']) * 2 + int(35 <= latest['rsi'] <= 55)
 
+    def fetch_account_balance(self):
+        # In real application, fetch via Pocket Option API (or WebSocket/HTTP endpoint if available)
+        # For now, DEMO ONLY!
+        logging.info(f"Simulated balance check: ${self.balance:.2f}")
+        return self.balance
         direction = None
         if bullish_score >= self.min_signal_score and bullish_score > bearish_score:
             direction = 'buy'
@@ -343,34 +359,20 @@ class PocketOptionBot:
         size = abs(risk_amount / risk_per_trade)
         return round(size, 6)
 
-    def get_market_data(self, symbol, timeframe='1m', limit=120):
-        # 1. Map your pairs to what CCXT understands
-        mapping = {
-            'EURUSD': 'EUR/USDT',
-            'GBPUSD': 'GBP/USDT',
-            'GBPJPY': 'GBP/JPY',
-            'EURJPY': 'EUR/JPY',
-            'USDCAD': 'USD/CAD'
-        }
-        
-        market = mapping.get(symbol)
-        if not market:
-            # Fallback: if pair isn't in mapping, try to format it (e.g. BTCUSD -> BTC/USD)
-            market = f"{symbol[:3]}/{symbol[3:]}"
-
-        try:
-            # 2. Fetch candles from exchange
-            candles = self.exchange.fetch_ohlcv(market, timeframe=timeframe, limit=limit)
-        except Exception as exc:
-            logging.warning(f"Could not fetch {market} from {self.exchange.id}: {exc}")
-            return None
-
-        # 3. Convert to DataFrame
-        df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    def get_market_data(self, symbol, limit=120):
+        # Using Binance for free demo candles (substitute with real PO API for production)
+        import ccxt
+        exchange = ccxt.binance()
+        if symbol == 'EURUSD':
+            market = 'EUR/USDT'
+        elif symbol == 'GBPUSD':
+            market = 'GBP/USDT'
+        else:
+            raise Exception("Unknown pair for demo data")
+        df = exchange.fetch_ohlcv(market, timeframe='1m', limit=limit)
+        df = pd.DataFrame(df, columns=['timestamp','open','high','low','close','volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        
-        # 4. Add indicators (RSI, EMA, etc)
-        return self.enrich_market_data(df)
+        return df
 
     def analyze_ict(self, df):
         # ----- MINIMAL ICT/SMART MONEY LOGIC (all-in-one for space) -----
@@ -578,7 +580,7 @@ class PocketOptionBot:
     def run_backtest(self, bars=800, payout=0.82):
         for pair in self.pairs:
             try:
-                df = self.get_market_data(pair, '1m', bars)
+                df = self.fetch_market_data_compat(pair, timeframe='1m', limit=bars)
             except RuntimeError as exc:
                 logging.warning("Skipping %s backtest: %s", pair, exc)
                 continue
@@ -614,23 +616,28 @@ class PocketOptionBot:
             if self.daily_trade_count >= self.max_trades:
                 logging.info(f"Trade cap hit for today ({self.max_trades} trades). Sleeping until tomorrow.")
                 time.sleep(60 * 60 * 2)
+
             if self.daily_trade_count >= self.max_trades_per_day:
                 logging.info("Daily trade cap reached (%s). Sleeping before next cycle.", self.max_trades_per_day)
                 time.sleep(60 * 30)
                 continue
-            self.ensure_api_freshness()
+
             if not self.ensure_daily_strategy_review():
                 logging.warning("Strategy review not completed; waiting.")
                 time.sleep(60)
                 continue
+            self.ensure_api_freshness()
+
             if not self.can_trade_by_phase():
                 logging.info("Phase trade cap reached (%s).", self.phase_trade_cap)
                 time.sleep(60 * 30)
                 continue
+
             if ((self.start_of_day_balance - self.balance) / max(self.start_of_day_balance, 1e-9)) * 100 >= self.max_daily_drawdown_pct:
                 logging.warning("Daily drawdown cap reached.")
                 time.sleep(60 * 30)
                 continue
+
             if self.last_trade_time is not None:
                 elapsed = datetime.datetime.now(datetime.timezone.utc) - self.last_trade_time
                 if elapsed < datetime.timedelta(minutes=self.trade_cooldown_minutes):
@@ -655,10 +662,13 @@ class PocketOptionBot:
                 time.sleep(120)  # align with 2min candle (demo frequency)
 
                 try:
-                    df = self.get_market_data(pair, timeframe='1m', limit=max(120, self.market_data_limit))
+                    df = self.fetch_market_data_compat(pair, timeframe='1m', limit=max(120, self.market_data_limit))
                     mtf = self.get_multi_timeframe_snapshot(pair, limit=100)
                 except RuntimeError as exc:
                     logging.warning("Skipping %s: %s", pair, exc)
+                    continue
+                if df is None or len(df) == 0:
+                    logging.warning("Skipping %s: empty market data returned.", pair)
                     continue
 
                 market_state = self.infer_market_state(df)
