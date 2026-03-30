@@ -81,6 +81,7 @@ class ProbabilityBrain:
 
 class PocketOptionBot:
     FEATURE_COLUMNS = ['rsi', 'ema_fast', 'ema_slow', 'atr', 'volume']
+    BASE_OHLCV_COLUMNS = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
 
     def __init__(self):
         self.email = config.PO_EMAIL
@@ -247,9 +248,31 @@ class PocketOptionBot:
     def fetch_market_data_compat(self, symbol, timeframe='1m', limit=240):
         params = inspect.signature(self.get_market_data).parameters
         if 'timeframe' in params:
-            return self.get_market_data(symbol, timeframe=timeframe, limit=limit)
-        logging.warning("Detected legacy get_market_data signature; ignoring timeframe=%s for %s", timeframe, symbol)
-        return self.get_market_data(symbol, limit=limit)
+            raw = self.get_market_data(symbol, timeframe=timeframe, limit=limit)
+        else:
+            logging.warning("Detected legacy get_market_data signature; ignoring timeframe=%s for %s", timeframe, symbol)
+            raw = self.get_market_data(symbol, limit=limit)
+        return self.normalize_market_data(raw)
+
+    def normalize_market_data(self, raw_df):
+        if raw_df is None:
+            return None
+
+        df = raw_df.copy()
+        if not isinstance(df, pd.DataFrame):
+            try:
+                df = pd.DataFrame(df, columns=self.BASE_OHLCV_COLUMNS)
+            except Exception:
+                return None
+
+        required_base = {'timestamp', 'open', 'high', 'low', 'close', 'volume'}
+        if not required_base.issubset(df.columns):
+            return None
+        if 'timestamp' in df.columns and not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
+            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce', unit='ms')
+        if {'ema_fast', 'ema_slow', 'rsi', 'atr'}.issubset(df.columns):
+            return df
+        return self.enrich_market_data(df)
 
     def enrich_market_data(self, df):
         out = df.copy()
@@ -279,6 +302,11 @@ class PocketOptionBot:
 
     @staticmethod
     def infer_market_state(df):
+        if df is None or len(df) == 0:
+            return 'Unknown'
+        required = {'high', 'low', 'close', 'ema_fast', 'ema_slow'}
+        if not required.issubset(df.columns):
+            return 'Unknown'
         volatility = (df['high'] - df['low']).tail(30).mean() / max(df['close'].tail(30).mean(), 1e-9)
         trend = abs(df['ema_fast'].iloc[-1] - df['ema_slow'].iloc[-1]) / max(df['close'].iloc[-1], 1e-9)
         if volatility > 0.01:
@@ -310,6 +338,11 @@ class PocketOptionBot:
             logging.warning("analyze_ict missing required columns (%s); got=%s", sorted(required_cols), list(df.columns))
             return None
 
+    def fetch_account_balance(self):
+        # In real application, fetch via Pocket Option API (or WebSocket/HTTP endpoint if available)
+        # For now, DEMO ONLY!
+        logging.info(f"Simulated balance check: ${self.balance:.2f}")
+        return self.balance
         work = df.copy()
         work['s_high'] = (work['high'].shift(2) < work['high'].shift(1)) & (work['high'].shift(1) > work['high'])
         work['s_low'] = (work['low'].shift(2) > work['low'].shift(1)) & (work['low'].shift(1) < work['low'])
@@ -322,11 +355,6 @@ class PocketOptionBot:
         bearish_score = int(any(work['s_high'].tail(5))) * 2 + int(any(work['fvg_down'].tail(3))) * 2
         bearish_score += int(latest['ema_fast'] < latest['ema_slow']) * 2 + int(35 <= latest['rsi'] <= 55)
 
-    def fetch_account_balance(self):
-        # In real application, fetch via Pocket Option API (or WebSocket/HTTP endpoint if available)
-        # For now, DEMO ONLY!
-        logging.info(f"Simulated balance check: ${self.balance:.2f}")
-        return self.balance
         direction = None
         if bullish_score >= self.min_signal_score and bullish_score > bearish_score:
             direction = 'buy'
@@ -626,12 +654,12 @@ class PocketOptionBot:
                 logging.warning("Strategy review not completed; waiting.")
                 time.sleep(60)
                 continue
-            self.ensure_api_freshness()
 
             if not self.can_trade_by_phase():
                 logging.info("Phase trade cap reached (%s).", self.phase_trade_cap)
                 time.sleep(60 * 30)
                 continue
+            self.ensure_api_freshness()
 
             if ((self.start_of_day_balance - self.balance) / max(self.start_of_day_balance, 1e-9)) * 100 >= self.max_daily_drawdown_pct:
                 logging.warning("Daily drawdown cap reached.")
@@ -659,7 +687,6 @@ class PocketOptionBot:
                 if self.daily_trade_count >= self.max_trades_per_day:
                     logging.info("Daily trade cap reached (%s).", self.max_trades_per_day)
                     break
-                time.sleep(120)  # align with 2min candle (demo frequency)
 
                 try:
                     df = self.fetch_market_data_compat(pair, timeframe='1m', limit=max(120, self.market_data_limit))
@@ -697,6 +724,7 @@ class PocketOptionBot:
                 self.execute_trade(pair, direction, size, df.iloc[-1], entry, stop, market_state, entry_setup)
                 if not self.can_trade_by_phase():
                     break
+            time.sleep(120)  # align with 2min candle (demo frequency)
 
             time.sleep(120)
 
