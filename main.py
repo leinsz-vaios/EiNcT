@@ -119,7 +119,7 @@ class PocketOptionBot:
         self.ws = None  # Will hold the websocket connection
         self.last_trade_time = None
         self.model = self.load_ai_model()
-        self.exchange = ccxt.binance()
+        self.exchange = ccxt.kraken()
         self.po_client = None
         if config.PO_BASE_URL and config.PO_API_TOKEN:
             self.po_client = PocketOptionClient(config.PO_BASE_URL, config.PO_API_TOKEN)
@@ -343,20 +343,34 @@ class PocketOptionBot:
         size = abs(risk_amount / risk_per_trade)
         return round(size, 6)
 
-    def get_market_data(self, symbol, limit=120):
-        # Using Binance for free demo candles (substitute with real PO API for production)
-        import ccxt
-        exchange = ccxt.binance()
-        if symbol == 'EURUSD':
-            market = 'EUR/USDT'
-        elif symbol == 'GBPUSD':
-            market = 'GBP/USDT'
-        else:
-            raise Exception("Unknown pair for demo data")
-        df = exchange.fetch_ohlcv(market, timeframe='1m', limit=limit)
-        df = pd.DataFrame(df, columns=['timestamp','open','high','low','close','volume'])
+    def get_market_data(self, symbol, timeframe='1m', limit=120):
+        # 1. Map your pairs to what CCXT understands
+        mapping = {
+            'EURUSD': 'EUR/USDT',
+            'GBPUSD': 'GBP/USDT',
+            'GBPJPY': 'GBP/JPY',
+            'EURJPY': 'EUR/JPY',
+            'USDCAD': 'USD/CAD'
+        }
+        
+        market = mapping.get(symbol)
+        if not market:
+            # Fallback: if pair isn't in mapping, try to format it (e.g. BTCUSD -> BTC/USD)
+            market = f"{symbol[:3]}/{symbol[3:]}"
+
+        try:
+            # 2. Fetch candles from exchange
+            candles = self.exchange.fetch_ohlcv(market, timeframe=timeframe, limit=limit)
+        except Exception as exc:
+            logging.warning(f"Could not fetch {market} from {self.exchange.id}: {exc}")
+            return None
+
+        # 3. Convert to DataFrame
+        df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        return df
+        
+        # 4. Add indicators (RSI, EMA, etc)
+        return self.enrich_market_data(df)
 
     def analyze_ict(self, df):
         # ----- MINIMAL ICT/SMART MONEY LOGIC (all-in-one for space) -----
@@ -634,11 +648,11 @@ class PocketOptionBot:
                     size = self.risk_size(entry, stop)
                     if self.daily_trade_count < self.max_trades:
                         self.trade(pair, direction, size)
-                if self.daily_trade_count >= self.max_trades:
+                
                 if self.daily_trade_count >= self.max_trades_per_day:
                     logging.info("Daily trade cap reached (%s).", self.max_trades_per_day)
                     break
-            time.sleep(120)  # align with 2min candle (demo frequency)
+                time.sleep(120)  # align with 2min candle (demo frequency)
 
                 try:
                     df = self.get_market_data(pair, timeframe='1m', limit=max(120, self.market_data_limit))
