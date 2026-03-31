@@ -121,7 +121,10 @@ class PocketOptionBot:
         self.ws = None  # Will hold the websocket connection
         self.last_trade_time = None
         self.model = self.load_ai_model()
-        self.exchange = ccxt.binance()
+        self.market_exchange_ids = config.MARKET_DATA_EXCHANGES
+        self.exchanges = [getattr(ccxt, ex_id)() for ex_id in self.market_exchange_ids if hasattr(ccxt, ex_id)]
+        if not self.exchanges:
+            self.exchanges = [ccxt.binance()]
         self.po_client = None
         if config.PO_BASE_URL and config.PO_API_TOKEN:
             self.po_client = PocketOptionClient(config.PO_BASE_URL, config.PO_API_TOKEN)
@@ -135,8 +138,11 @@ class PocketOptionBot:
         return 3
 
     @staticmethod
-    def symbol_to_market(symbol):
-        mapping = {'EURUSD': 'EUR/USDT', 'GBPUSD': 'GBP/USDT'}
+    def market_candidates(symbol):
+        mapping = {
+            'EURUSD': ['EUR/USDT', 'EUR/USD'],
+            'GBPUSD': ['GBP/USDT', 'GBP/USD'],
+        }
         if symbol not in mapping:
             raise ValueError(f"Unknown pair for demo data: {symbol}")
         return mapping[symbol]
@@ -229,15 +235,24 @@ class PocketOptionBot:
         return True
 
     def get_market_data(self, symbol, timeframe='1m', limit=240):
-        market = self.symbol_to_market(symbol)
-        try:
-            candles = self.exchange.fetch_ohlcv(market, timeframe=timeframe, limit=limit)
-        except CCXTNetworkError as exc:
-            raise RuntimeError(f"Unable to fetch market data for {symbol}: {exc}") from exc
-
-        df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        return self.enrich_market_data(df)
+        last_exc = None
+        for exchange in self.exchanges:
+            try:
+                markets = exchange.load_markets()
+                market = next((m for m in self.market_candidates(symbol) if m in markets), None)
+                if market is None:
+                    continue
+                candles = exchange.fetch_ohlcv(market, timeframe=timeframe, limit=limit)
+                df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                return self.enrich_market_data(df)
+            except CCXTNetworkError as exc:
+                last_exc = exc
+                continue
+            except Exception as exc:
+                last_exc = exc
+                continue
+        raise RuntimeError(f"Unable to fetch market data for {symbol} from exchanges={self.market_exchange_ids}: {last_exc}")
 
     def get_multi_timeframe_snapshot(self, symbol, limit=100):
         snapshots = {}
@@ -654,12 +669,12 @@ class PocketOptionBot:
                 logging.warning("Strategy review not completed; waiting.")
                 time.sleep(60)
                 continue
+            self.ensure_api_freshness()
 
             if not self.can_trade_by_phase():
                 logging.info("Phase trade cap reached (%s).", self.phase_trade_cap)
                 time.sleep(60 * 30)
                 continue
-            self.ensure_api_freshness()
 
             if ((self.start_of_day_balance - self.balance) / max(self.start_of_day_balance, 1e-9)) * 100 >= self.max_daily_drawdown_pct:
                 logging.warning("Daily drawdown cap reached.")
@@ -687,6 +702,7 @@ class PocketOptionBot:
                 if self.daily_trade_count >= self.max_trades_per_day:
                     logging.info("Daily trade cap reached (%s).", self.max_trades_per_day)
                     break
+                time.sleep(120)  # align with 2min candle (demo frequency)
 
                 try:
                     df = self.fetch_market_data_compat(pair, timeframe='1m', limit=max(120, self.market_data_limit))
@@ -724,7 +740,6 @@ class PocketOptionBot:
                 self.execute_trade(pair, direction, size, df.iloc[-1], entry, stop, market_state, entry_setup)
                 if not self.can_trade_by_phase():
                     break
-            time.sleep(120)  # align with 2min candle (demo frequency)
 
             time.sleep(120)
 
