@@ -36,7 +36,7 @@ TRADE_MEMORY_PATH = os.getenv('TRADE_MEMORY_PATH', 'trade_memory.csv')
 TRADE_JOURNAL_PATH = os.getenv('TRADE_JOURNAL_PATH', 'trade_journal.csv')
 AI_MIN_BUY_PROB = float(os.getenv('AI_MIN_BUY_PROB', '0.60'))
 AI_MAX_SELL_PROB = float(os.getenv('AI_MAX_SELL_PROB', '0.40'))
-AI_RETRAIN_EVERY_N_TRADES = int(os.getenv('AI_RETRAIN_EVERY_N_TRADES', '2'))
+AI_RETRAIN_EVERY_N_TRADES = int(os.getenv('AI_RETRAIN_EVERY_N_TRADES', '1'))
 AI_MIN_RETRAIN_ROWS = int(os.getenv('AI_MIN_RETRAIN_ROWS', '40'))
 
 # If you want to add more pairs, do it here!
