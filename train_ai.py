@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(mess
 
 
 def fetch_training_data(markets, bars):
-    exchange = ccxt.binance()
+    exchange = ccxt.kraken()
     frames = []
 
     for market in markets:
