@@ -15,9 +15,7 @@ import requests
 import warnings
 
 import ccxt
-from ccxt.base.errors import NetworkError
-# Then you can use it as NetworkError in your code
-
+from ccxt.base.errors import NetworkError as CCXTNetworkError
 import numpy as np
 import pandas as pd
 
@@ -124,11 +122,9 @@ class PocketOptionBot:
         self.last_trade_time = None
         self.model = self.load_ai_model()
         self.market_exchange_ids = config.MARKET_DATA_EXCHANGES
-        # Look for this section in your __init__
         self.exchanges = [getattr(ccxt, ex_id)() for ex_id in self.market_exchange_ids if hasattr(ccxt, ex_id)]
         if not self.exchanges:
-            self.exchanges = [ccxt.kraken({'enableRateLimit': True})] # Changed from binance
-
+            self.exchanges = [ccxt.binance()]
         self.po_client = None
         if config.PO_BASE_URL and config.PO_API_TOKEN:
             self.po_client = PocketOptionClient(config.PO_BASE_URL, config.PO_API_TOKEN)
@@ -250,7 +246,7 @@ class PocketOptionBot:
                 df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
                 return self.enrich_market_data(df)
-            except NetworkError as exc:
+            except CCXTNetworkError as exc:
                 last_exc = exc
                 continue
             except Exception as exc:
@@ -407,22 +403,19 @@ class PocketOptionBot:
         return round(size, 6)
 
     def get_market_data(self, symbol, limit=120):
-    
-        exchange = ccxt.kraken({'enableRateLimit': True})
-    
-    # Kraken uses different naming for these pairs
+        # Using Binance for free demo candles (substitute with real PO API for production)
+        import ccxt
+        exchange = ccxt.binance()
         if symbol == 'EURUSD':
-            market = 'EUR/USD'
+            market = 'EUR/USDT'
         elif symbol == 'GBPUSD':
-            market = 'GBP/USD'
+            market = 'GBP/USDT'
         else:
-            market = symbol.replace('USD', '/USD') if 'USD' in symbol else symbol
-        
+            raise Exception("Unknown pair for demo data")
         df = exchange.fetch_ohlcv(market, timeframe='1m', limit=limit)
         df = pd.DataFrame(df, columns=['timestamp','open','high','low','close','volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         return df
-
 
     def analyze_ict(self, df):
         # ----- MINIMAL ICT/SMART MONEY LOGIC (all-in-one for space) -----
