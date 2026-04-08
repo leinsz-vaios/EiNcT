@@ -124,7 +124,7 @@ class PocketOptionBot:
         self.market_exchange_ids = config.MARKET_DATA_EXCHANGES
         self.exchanges = [getattr(ccxt, ex_id)() for ex_id in self.market_exchange_ids if hasattr(ccxt, ex_id)]
         if not self.exchanges:
-            self.exchanges = [ccxt.binance()]
+            self.exchanges = [ccxt.kraken()]
         self.po_client = None
         if config.PO_BASE_URL and config.PO_API_TOKEN:
             self.po_client = PocketOptionClient(config.PO_BASE_URL, config.PO_API_TOKEN)
@@ -403,17 +403,19 @@ class PocketOptionBot:
         return round(size, 6)
 
     def get_market_data(self, symbol, limit=120):
-        # Using Binance for free demo candles (substitute with real PO API for production)
+        # Using kraken for free demo candles (substitute with real PO API for production)
         import ccxt
-        exchange = ccxt.binance()
+        exchange = ccxt.kraken()
+
         if symbol == 'EURUSD':
-            market = 'EUR/USDT'
+            market = 'EUR/USD'
         elif symbol == 'GBPUSD':
-            market = 'GBP/USDT'
+            market = 'GBP/USD'
         else:
             raise Exception("Unknown pair for demo data")
+
         df = exchange.fetch_ohlcv(market, timeframe='1m', limit=limit)
-        df = pd.DataFrame(df, columns=['timestamp','open','high','low','close','volume'])
+        df = pd.DataFrame(df, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         return df
 
@@ -756,7 +758,7 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
     bot = PocketOptionBot()
-    bot.run()
+    
     if args.mode == 'backtest':
         bot.run_backtest(bars=args.bars, payout=args.payout)
     elif args.mode == 'report':

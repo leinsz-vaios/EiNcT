@@ -18,7 +18,7 @@ MIN_SIGNAL_SCORE = int(os.getenv('MIN_SIGNAL_SCORE', '4'))
 MAX_DAILY_DRAWDOWN_PCT = float(os.getenv('MAX_DAILY_DRAWDOWN_PCT', '5'))
 TRADE_COOLDOWN_MINUTES = int(os.getenv('TRADE_COOLDOWN_MINUTES', '5'))
 MARKET_DATA_LIMIT = int(os.getenv('MARKET_DATA_LIMIT', '240'))
-MARKET_DATA_EXCHANGES = [x.strip() for x in os.getenv('MARKET_DATA_EXCHANGES', 'binance,kraken,coinbase').split(',') if x.strip()]
+MARKET_DATA_EXCHANGES = [x.strip() for x in os.getenv('MARKET_DATA_EXCHANGES', 'kraken,coinbase').split(',') if x.strip()]
 
 PAIRS = ['EURUSD', 'GBPUSD']
 TIMEFRAME = '2m'
