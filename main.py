@@ -419,30 +419,135 @@ class PocketOptionBot:
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         return df
 
-    def analyze_ict(self, df):
-        # ----- MINIMAL ICT/SMART MONEY LOGIC (all-in-one for space) -----
-        # 1. Market Structure: find swing highs/lows
-        df['s_high'] = (df['high'].shift(2) < df['high'].shift(1)) & (df['high'].shift(1) > df['high'])  # peak
+    def analyze_ict(self, df, mtf_bias=None, log_signal=True):
+        if df is None or len(df) < 50:
+            return None
+
+        df = df.copy()
+
+        # -------------------------
+        # 1. MARKET STRUCTURE
+        # -------------------------
+        df['s_high'] = (df['high'].shift(2) < df['high'].shift(1)) & (df['high'].shift(1) > df['high'])
         df['s_low'] = (df['low'].shift(2) > df['low'].shift(1)) & (df['low'].shift(1) < df['low'])
 
-        # 2. FVG scan: identify fair value gaps
-        df['fvg_up'] = (df['low'] > df['high'].shift(2))
-        df['fvg_down'] = (df['high'] < df['low'].shift(2))
+        # -------------------------
+        # 2. LIQUIDITY (ICT CORE)
+        # -------------------------
+        recent_high = df['high'].rolling(20).max()
+        recent_low = df['low'].rolling(20).min()
 
-        # 3. Session check (basic): only trade London/NY hours UTC
-        now = datetime.datetime.now(datetime.UTC).hour
-        session_ok = (7 <= now <= 17)
+        df['liquidity_grab_up'] = df['high'] > recent_high.shift(1)
+        df['liquidity_grab_down'] = df['low'] < recent_low.shift(1)
 
-        # 4. Signal generation:
-        bullish = any(df['s_low'][-5:]) and any(df['fvg_up'][-3:]) and session_ok
-        bearish = any(df['s_high'][-5:]) and any(df['fvg_down'][-3:]) and session_ok
+        # -------------------------
+        # 3. FAIR VALUE GAPS (FVG)
+        # -------------------------
+        df['fvg_up'] = df['low'] > df['high'].shift(2)
+        df['fvg_down'] = df['high'] < df['low'].shift(2)
 
-        signal = None
-        if bullish and not bearish:
-            signal = 'buy'
-        elif bearish and not bullish:
-            signal = 'sell'
-        return signal
+        # -------------------------
+        # 4. SESSION FILTER (Silver Bullet)
+        # -------------------------
+        hour = datetime.datetime.now(datetime.timezone.utc).hour
+        session_ok = (7 <= hour <= 17)  # London + NY
+
+        # -------------------------
+        # 5. LATEST CANDLE
+        # -------------------------
+        latest = df.iloc[-1]
+
+        bullish_score = 0
+        bearish_score = 0
+ 
+        # -------------------------
+        # 6. LIQUIDITY PURGE + REVERT
+        # -------------------------
+        if latest['liquidity_grab_down']:
+            bullish_score += 3
+
+        if latest['liquidity_grab_up']:
+            bearish_score += 3
+
+        # -------------------------
+        # 7. TURTLE SOUP (False Breakout)
+        # -------------------------
+        if latest['liquidity_grab_down'] and latest['close'] > latest['open']:
+            bullish_score += 2
+
+        if latest['liquidity_grab_up'] and latest['close'] < latest['open']:
+            bearish_score += 2
+
+        # -------------------------
+        # 8. FVG CONFIRMATION
+        # -------------------------
+        if any(df['fvg_up'].tail(3)):
+            bullish_score += 2
+
+        if any(df['fvg_down'].tail(3)):
+            bearish_score += 2
+
+        # -------------------------
+        # 9. EMA TREND CONFIRMATION
+        # -------------------------
+        if latest['ema_fast'] > latest['ema_slow']:
+            bullish_score += 1
+
+        if latest['ema_fast'] < latest['ema_slow']:
+            bearish_score += 1
+
+        # -------------------------
+        # 10. RSI FILTER
+        # -------------------------
+        if 45 <= latest['rsi'] <= 65:
+            bullish_score += 1
+
+        if 35 <= latest['rsi'] <= 55:
+            bearish_score += 1
+
+        # -------------------------
+        # 11. SESSION FILTER
+        # -------------------------
+        if not session_ok:
+            return None
+
+        # -------------------------
+        # 12. FINAL DECISION
+        # -------------------------
+        direction = None
+
+        if bullish_score >= self.min_signal_score and bullish_score > bearish_score:
+            direction = 'buy'
+
+        elif bearish_score >= self.min_signal_score and bearish_score > bullish_score:
+            direction = 'sell'
+
+        # -------------------------
+        # 13. MTF FILTER
+        # -------------------------
+        if direction and mtf_bias and direction != mtf_bias:
+            return None
+
+        # -------------------------
+        # 14. AI FILTER (if enabled)
+        # -------------------------
+        prob_up = self._ai_probability_up(latest)
+        if prob_up is not None:
+            if direction == 'buy' and prob_up < self.ai_min_buy_prob:
+                return None
+            if direction == 'sell' and prob_up > self.ai_max_sell_prob:
+                return None
+
+        # -------------------------
+        # 15. LOGGING
+        # -------------------------
+        if direction and log_signal:
+             logging.info(
+                 "ICT SIGNAL: %s | bull=%s bear=%s | liquidity + FVG + session aligned",
+                direction, bullish_score, bearish_score
+             )
+
+        return direction
 
     def ensure_api_freshness(self):
         # Dummy implementation for demonstration. Real trading bots fetch fresh endpoint config from PO docs or via API gateway
