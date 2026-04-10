@@ -128,6 +128,9 @@ class PocketOptionBot:
         self.po_client = None
         if config.PO_BASE_URL and config.PO_API_TOKEN:
             self.po_client = PocketOptionClient(config.PO_BASE_URL, config.PO_API_TOKEN)
+        self.signal_weights_path = "signal_weights.json"
+        self.last_signal_profile = None
+        self.signal_weights = self.load_signal_weights()
 
     @property
     def phase_trade_cap(self):
@@ -345,40 +348,86 @@ class PocketOptionBot:
         return None
 
     def analyze_ict(self, df, mtf_bias=None, log_signal=True):
-        if df is None or len(df) == 0:
+        if df is None or len(df) < 50:
             logging.warning("analyze_ict received empty market data; skipping signal evaluation.")
             return None
-        required_cols = {'high', 'low', 'close', 'ema_fast', 'ema_slow', 'rsi'}
+        required_cols = {'open', 'high', 'low', 'close', 'ema_fast', 'ema_slow', 'rsi', 'atr'}
         if not required_cols.issubset(df.columns):
             logging.warning("analyze_ict missing required columns (%s); got=%s", sorted(required_cols), list(df.columns))
             return None
+
+        work = df.copy()
+        work['s_high'] = (work['high'].shift(2) < work['high'].shift(1)) & (work['high'].shift(1) > work['high'])  # peak
+        work['s_low'] = (work['low'].shift(2) > work['low'].shift(1)) & (work['low'].shift(1) < work['low'])
+        prev_high = work['high'].rolling(20).max().shift(1)
+        prev_low = work['low'].rolling(20).min().shift(1)
+        work['liq_grab_up'] = work['high'] > prev_high
+        work['liq_grab_down'] = work['low'] < prev_low
+        work['body'] = (work['close'] - work['open']).abs()
+        work['displacement'] = work['body'] > (work['atr'] * 0.8)
+        work['fvg_up'] = work['low'] > work['high'].shift(2)
+        work['fvg_down'] = work['high'] < work['low'].shift(2)
+        latest = work.iloc[-1]
+
+        buy_score = 0.0
+        sell_score = 0.0
+        signals = {
+            "liq_grab_down": bool(latest["liq_grab_down"]),
+            "liq_grab_up": bool(latest["liq_grab_up"]),
+            "displacement_up": bool(latest["displacement"] and latest["close"] > latest["open"]),
+            "displacement_down": bool(latest["displacement"] and latest["close"] < latest["open"]),
+            "structure_up": bool(latest["close"] > work["high"].shift(5).iloc[-1]),
+            "structure_down": bool(latest["close"] < work["low"].shift(5).iloc[-1]),
+            "fvg_up": bool(any(work["fvg_up"].tail(3))),
+            "fvg_down": bool(any(work["fvg_down"].tail(3))),
+            "trend_up": bool(latest["ema_fast"] > latest["ema_slow"]),
+            "trend_down": bool(latest["ema_fast"] < latest["ema_slow"]),
+            "rsi_buy": bool(45 <= latest["rsi"] <= 65),
+            "rsi_sell": bool(35 <= latest["rsi"] <= 55),
+            "mtf_bias": mtf_bias in ("buy", "sell"),
+        }
+        self.last_signal_profile = signals
 
     def fetch_account_balance(self):
         # In real application, fetch via Pocket Option API (or WebSocket/HTTP endpoint if available)
         # For now, DEMO ONLY!
         logging.info(f"Simulated balance check: ${self.balance:.2f}")
         return self.balance
-        work = df.copy()
-        work['s_high'] = (work['high'].shift(2) < work['high'].shift(1)) & (work['high'].shift(1) > work['high'])
-        work['s_low'] = (work['low'].shift(2) > work['low'].shift(1)) & (work['low'].shift(1) < work['low'])
-        work['fvg_up'] = work['low'] > work['high'].shift(2)
-        work['fvg_down'] = work['high'] < work['low'].shift(2)
-        latest = work.iloc[-1]
-
-        bullish_score = int(any(work['s_low'].tail(5))) * 2 + int(any(work['fvg_up'].tail(3))) * 2
-        bullish_score += int(latest['ema_fast'] > latest['ema_slow']) * 2 + int(45 <= latest['rsi'] <= 65)
-        bearish_score = int(any(work['s_high'].tail(5))) * 2 + int(any(work['fvg_down'].tail(3))) * 2
-        bearish_score += int(latest['ema_fast'] < latest['ema_slow']) * 2 + int(35 <= latest['rsi'] <= 55)
+        if signals["liq_grab_down"]:
+            buy_score += self.signal_weights["liq_grab_down"]
+        if signals["liq_grab_up"]:
+            sell_score += self.signal_weights["liq_grab_up"]
+        if signals["displacement_up"]:
+            buy_score += self.signal_weights["displacement_up"]
+        if signals["displacement_down"]:
+            sell_score += self.signal_weights["displacement_down"]
+        if signals["structure_up"]:
+            buy_score += self.signal_weights["structure_up"]
+        if signals["structure_down"]:
+            sell_score += self.signal_weights["structure_down"]
+        if signals["fvg_up"]:
+            buy_score += self.signal_weights["fvg_up"]
+        if signals["fvg_down"]:
+            sell_score += self.signal_weights["fvg_down"]
+        if signals["trend_up"]:
+            buy_score += self.signal_weights["trend_up"]
+        if signals["trend_down"]:
+            sell_score += self.signal_weights["trend_down"]
+        if signals["rsi_buy"]:
+            buy_score += self.signal_weights["rsi_buy"]
+        if signals["rsi_sell"]:
+            sell_score += self.signal_weights["rsi_sell"]
+        if mtf_bias == "buy":
+            buy_score += self.signal_weights["mtf_bias"]
+        elif mtf_bias == "sell":
+            sell_score += self.signal_weights["mtf_bias"]
 
         direction = None
-        if bullish_score >= self.min_signal_score and bullish_score > bearish_score:
+        if buy_score >= self.min_signal_score and buy_score > sell_score:
             direction = 'buy'
-        elif bearish_score >= self.min_signal_score and bearish_score > bullish_score:
+        elif sell_score >= self.min_signal_score and sell_score > buy_score:
             direction = 'sell'
         if direction is None:
-            return None
-
-        if mtf_bias and direction != mtf_bias:
             return None
 
         prob_up = self._ai_probability_up(latest)
@@ -389,8 +438,58 @@ class PocketOptionBot:
                 return None
 
         if log_signal:
-            logging.info("Signal=%s bull=%s bear=%s mtf_bias=%s ai_p_up=%s", direction, bullish_score, bearish_score, mtf_bias, prob_up)
+            logging.info("Signal=%s buy=%.2f sell=%.2f mtf_bias=%s ai_p_up=%s", direction, buy_score, sell_score, mtf_bias, prob_up)
         return direction
+
+    def load_signal_weights(self):
+        defaults = {
+            "liq_grab_down": 3.0,
+            "liq_grab_up": 3.0,
+            "displacement_up": 2.0,
+            "displacement_down": 2.0,
+            "structure_up": 2.0,
+            "structure_down": 2.0,
+            "fvg_up": 1.0,
+            "fvg_down": 1.0,
+            "trend_up": 1.0,
+            "trend_down": 1.0,
+            "rsi_buy": 1.0,
+            "rsi_sell": 1.0,
+            "mtf_bias": 1.0,
+        }
+        if os.path.exists(self.signal_weights_path):
+            try:
+                with open(self.signal_weights_path, "r", encoding="utf-8") as fh:
+                    saved = json.load(fh)
+                for key, value in saved.items():
+                    if key in defaults:
+                        defaults[key] = float(value)
+            except Exception as exc:
+                logging.warning("Could not load signal weights: %s", exc)
+        return defaults
+
+    def save_signal_weights(self):
+        try:
+            with open(self.signal_weights_path, "w", encoding="utf-8") as fh:
+                json.dump(self.signal_weights, fh, indent=2)
+        except Exception as exc:
+            logging.warning("Could not save signal weights: %s", exc)
+
+    def update_signal_weights(self, profile, won):
+        if not profile:
+            return
+        up_step = 0.12 if won else -0.06
+        down_step = -0.06 if won else 0.03
+        for name, triggered in profile.items():
+            if not triggered:
+                continue
+            current = float(self.signal_weights.get(name, 1.0))
+            if won:
+                current += up_step
+            else:
+                current += down_step
+            self.signal_weights[name] = float(np.clip(current, 0.25, 5.0))
+        self.save_signal_weights()
 
     def can_trade_by_phase(self):
         return self.daily_trade_count < self.phase_trade_cap
@@ -403,151 +502,44 @@ class PocketOptionBot:
         return round(size, 6)
 
     def get_market_data(self, symbol, limit=120):
-        # Using kraken for free demo candles (substitute with real PO API for production)
+        # Using Binance for free demo candles (substitute with real PO API for production)
         import ccxt
-        exchange = ccxt.kraken()
-
+        exchange = ccxt.binance()
         if symbol == 'EURUSD':
-            market = 'EUR/USD'
+            market = 'EUR/USDT'
         elif symbol == 'GBPUSD':
-            market = 'GBP/USD'
+            market = 'GBP/USDT'
         else:
             raise Exception("Unknown pair for demo data")
-
         df = exchange.fetch_ohlcv(market, timeframe='1m', limit=limit)
-        df = pd.DataFrame(df, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df = pd.DataFrame(df, columns=['timestamp','open','high','low','close','volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         return df
 
-    def analyze_ict(self, df, mtf_bias=None, log_signal=True):
-        if df is None or len(df) < 50:
-            return None
-
-        df = df.copy()
-
-        # -------------------------
-        # 1. MARKET STRUCTURE
-        # -------------------------
-        df['s_high'] = (df['high'].shift(2) < df['high'].shift(1)) & (df['high'].shift(1) > df['high'])
+    def analyze_ict(self, df):
+        # ----- MINIMAL ICT/SMART MONEY LOGIC (all-in-one for space) -----
+        # 1. Market Structure: find swing highs/lows
+        df['s_high'] = (df['high'].shift(2) < df['high'].shift(1)) & (df['high'].shift(1) > df['high'])  # peak
         df['s_low'] = (df['low'].shift(2) > df['low'].shift(1)) & (df['low'].shift(1) < df['low'])
 
-        # -------------------------
-        # 2. LIQUIDITY (ICT CORE)
-        # -------------------------
-        recent_high = df['high'].rolling(20).max()
-        recent_low = df['low'].rolling(20).min()
+        # 2. FVG scan: identify fair value gaps
+        df['fvg_up'] = (df['low'] > df['high'].shift(2))
+        df['fvg_down'] = (df['high'] < df['low'].shift(2))
 
-        df['liquidity_grab_up'] = df['high'] > recent_high.shift(1)
-        df['liquidity_grab_down'] = df['low'] < recent_low.shift(1)
+        # 3. Session check (basic): only trade London/NY hours UTC
+        now = datetime.datetime.now(datetime.UTC).hour
+        session_ok = (7 <= now <= 17)
 
-        # -------------------------
-        # 3. FAIR VALUE GAPS (FVG)
-        # -------------------------
-        df['fvg_up'] = df['low'] > df['high'].shift(2)
-        df['fvg_down'] = df['high'] < df['low'].shift(2)
+        # 4. Signal generation:
+        bullish = any(df['s_low'][-5:]) and any(df['fvg_up'][-3:]) and session_ok
+        bearish = any(df['s_high'][-5:]) and any(df['fvg_down'][-3:]) and session_ok
 
-        # -------------------------
-        # 4. SESSION FILTER (Silver Bullet)
-        # -------------------------
-        hour = datetime.datetime.now(datetime.timezone.utc).hour
-        session_ok = (7 <= hour <= 17)  # London + NY
-
-        # -------------------------
-        # 5. LATEST CANDLE
-        # -------------------------
-        latest = df.iloc[-1]
-
-        bullish_score = 0
-        bearish_score = 0
- 
-        # -------------------------
-        # 6. LIQUIDITY PURGE + REVERT
-        # -------------------------
-        if latest['liquidity_grab_down']:
-            bullish_score += 3
-
-        if latest['liquidity_grab_up']:
-            bearish_score += 3
-
-        # -------------------------
-        # 7. TURTLE SOUP (False Breakout)
-        # -------------------------
-        if latest['liquidity_grab_down'] and latest['close'] > latest['open']:
-            bullish_score += 2
-
-        if latest['liquidity_grab_up'] and latest['close'] < latest['open']:
-            bearish_score += 2
-
-        # -------------------------
-        # 8. FVG CONFIRMATION
-        # -------------------------
-        if any(df['fvg_up'].tail(3)):
-            bullish_score += 2
-
-        if any(df['fvg_down'].tail(3)):
-            bearish_score += 2
-
-        # -------------------------
-        # 9. EMA TREND CONFIRMATION
-        # -------------------------
-        if latest['ema_fast'] > latest['ema_slow']:
-            bullish_score += 1
-
-        if latest['ema_fast'] < latest['ema_slow']:
-            bearish_score += 1
-
-        # -------------------------
-        # 10. RSI FILTER
-        # -------------------------
-        if 45 <= latest['rsi'] <= 65:
-            bullish_score += 1
-
-        if 35 <= latest['rsi'] <= 55:
-            bearish_score += 1
-
-        # -------------------------
-        # 11. SESSION FILTER
-        # -------------------------
-        if not session_ok:
-            return None
-
-        # -------------------------
-        # 12. FINAL DECISION
-        # -------------------------
-        direction = None
-
-        if bullish_score >= self.min_signal_score and bullish_score > bearish_score:
-            direction = 'buy'
-
-        elif bearish_score >= self.min_signal_score and bearish_score > bullish_score:
-            direction = 'sell'
-
-        # -------------------------
-        # 13. MTF FILTER
-        # -------------------------
-        if direction and mtf_bias and direction != mtf_bias:
-            return None
-
-        # -------------------------
-        # 14. AI FILTER (if enabled)
-        # -------------------------
-        prob_up = self._ai_probability_up(latest)
-        if prob_up is not None:
-            if direction == 'buy' and prob_up < self.ai_min_buy_prob:
-                return None
-            if direction == 'sell' and prob_up > self.ai_max_sell_prob:
-                return None
-
-        # -------------------------
-        # 15. LOGGING
-        # -------------------------
-        if direction and log_signal:
-             logging.info(
-                 "ICT SIGNAL: %s | bull=%s bear=%s | liquidity + FVG + session aligned",
-                direction, bullish_score, bearish_score
-             )
-
-        return direction
+        signal = None
+        if bullish and not bearish:
+            signal = 'buy'
+        elif bearish and not bullish:
+            signal = 'sell'
+        return signal
 
     def ensure_api_freshness(self):
         # Dummy implementation for demonstration. Real trading bots fetch fresh endpoint config from PO docs or via API gateway
@@ -725,6 +717,7 @@ class PocketOptionBot:
         if self.ai_retrain_every_n_trades > 0 and self.daily_trade_count % self.ai_retrain_every_n_trades == 0:
             self.retrain_ai_from_memory()
 
+        self.update_signal_weights(self.last_signal_profile, profit > 0)
         logging.info("TRADE %s %s stake=%.2f pnl=%.2f bal=%.2f reward=%.2f", pair, direction.upper(), stake, profit, self.balance, reward)
 
     def run_backtest(self, bars=800, payout=0.82):
@@ -801,52 +794,54 @@ class PocketOptionBot:
                     entry = df['close'].iloc[-1]
                     # Stop is 1 ATR below/above for risk calculation (simplified)
                     atr = df['high'].rolling(14).max().iloc[-1] - df['low'].rolling(14).min().iloc[-1]
-                    stop = entry - atr if direction == 'buy' else entry + atr
-                    size = self.risk_size(entry, stop)
-                    if self.daily_trade_count < self.max_trades:
-                        self.trade(pair, direction, size)
-                
                 if self.daily_trade_count >= self.max_trades_per_day:
                     logging.info("Daily trade cap reached (%s).", self.max_trades_per_day)
                     break
-                time.sleep(120)  # align with 2min candle (demo frequency)
 
                 try:
                     df = self.fetch_market_data_compat(pair, timeframe='1m', limit=max(120, self.market_data_limit))
                     mtf = self.get_multi_timeframe_snapshot(pair, limit=100)
+                    if df is None or len(df) == 0:
+                        logging.warning("Skipping %s: empty market data returned.", pair)
+                        continue
+
+                    market_state = self.infer_market_state(df)
+                    hour = int(df['timestamp'].iloc[-1].hour)
+                    if not self.apply_month2_filter(pair, market_state, hour):
+                        continue
+
+                    mtf_bias = self.timeframe_bias(mtf)
+                    direction = self.analyze_ict(df, mtf_bias=mtf_bias)
+                    if not direction:
+                        continue
+
+                    analysis_start = datetime.datetime.now(datetime.timezone.utc)
+                    entry = float(df['close'].iloc[-1])
+                    atr = float(df['atr'].iloc[-1])
+                    if np.isnan(atr) or atr <= 0:
+                        continue
+                    stop = entry - atr if direction == 'buy' else entry + atr
+                    size = self.risk_size(entry, stop)
+                    if self.daily_trade_count < self.max_trades:
+                        self.trade(pair, direction, size)
+                    if self.daily_trade_count >= self.max_trades:
+                        break
+                    time.sleep(120)  # align with 2min candle (demo frequency)
+                    entry_setup = 'ICT_MTF_BIAS_AI'
+
+                    if datetime.datetime.now(datetime.timezone.utc) - analysis_start > datetime.timedelta(minutes=self.analysis_timeout_minutes):
+                        logging.warning("Analysis exceeded timeout, skipping trade.")
+                        continue
+
+                    self.execute_trade(pair, direction, size, df.iloc[-1], entry, stop, market_state, entry_setup)
+                    if not self.can_trade_by_phase():
+                        break
                 except RuntimeError as exc:
                     logging.warning("Skipping %s: %s", pair, exc)
                     continue
-                if df is None or len(df) == 0:
-                    logging.warning("Skipping %s: empty market data returned.", pair)
+                except Exception as exc:
+                    logging.exception("Unexpected error while processing %s: %s", pair, exc)
                     continue
-
-                market_state = self.infer_market_state(df)
-                hour = int(df['timestamp'].iloc[-1].hour)
-                if not self.apply_month2_filter(pair, market_state, hour):
-                    continue
-
-                mtf_bias = self.timeframe_bias(mtf)
-                direction = self.analyze_ict(df, mtf_bias=mtf_bias)
-                if not direction:
-                    continue
-
-                analysis_start = datetime.datetime.now(datetime.timezone.utc)
-                entry = float(df['close'].iloc[-1])
-                atr = float(df['atr'].iloc[-1])
-                if np.isnan(atr) or atr <= 0:
-                    continue
-                stop = entry - atr if direction == 'buy' else entry + atr
-                size = self.risk_size(entry, stop)
-                entry_setup = 'ICT_MTF_BIAS_AI'
-
-                if datetime.datetime.now(datetime.timezone.utc) - analysis_start > datetime.timedelta(minutes=self.analysis_timeout_minutes):
-                    logging.warning("Analysis exceeded timeout, skipping trade.")
-                    continue
-
-                self.execute_trade(pair, direction, size, df.iloc[-1], entry, stop, market_state, entry_setup)
-                if not self.can_trade_by_phase():
-                    break
 
             time.sleep(120)
 
@@ -863,7 +858,7 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
     bot = PocketOptionBot()
-    
+    bot.run()
     if args.mode == 'backtest':
         bot.run_backtest(bars=args.bars, payout=args.payout)
     elif args.mode == 'report':
