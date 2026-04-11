@@ -44,7 +44,7 @@ AI_MIN_RETRAIN_ROWS = int(os.getenv('AI_MIN_RETRAIN_ROWS', '40'))
 STRATEGY_KNOWLEDGE_PATH = os.getenv('STRATEGY_KNOWLEDGE_PATH', 'strategy_knowledge.json')
 STRATEGY_REVIEW_STATE_PATH = os.getenv('STRATEGY_REVIEW_STATE_PATH', 'strategy_review_state.json')
 
-PAIRS = ['EURUSD', 'GBPUSD']
+PAIRS = ['EURUSD', 'GBPUSD', 'ETHUSD']
 TIMEFRAME = '1m'
-HIGHER_TIMEFRAMES = ['1w', '1d', '4h', '1h']
+HIGHER_TIMEFRAMES = ['4h', '1h']
 START_BALANCE = 1000

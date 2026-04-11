@@ -145,6 +145,7 @@ class PocketOptionBot:
         mapping = {
             'EURUSD': ['EUR/USDT', 'EUR/USD'],
             'GBPUSD': ['GBP/USDT', 'GBP/USD'],
+            'ETHUSD': ['ETH/USD', 'ETH/USDT'],
         }
         if symbol not in mapping:
             raise ValueError(f"Unknown pair for demo data: {symbol}")
@@ -237,25 +238,21 @@ class PocketOptionBot:
         )
         return True
 
-    def get_market_data(self, symbol, timeframe='1m', limit=240):
-        last_exc = None
-        for exchange in self.exchanges:
-            try:
-                markets = exchange.load_markets()
-                market = next((m for m in self.market_candidates(symbol) if m in markets), None)
-                if market is None:
-                    continue
-                candles = exchange.fetch_ohlcv(market, timeframe=timeframe, limit=limit)
-                df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-                return self.enrich_market_data(df)
-            except CCXTNetworkError as exc:
-                last_exc = exc
-                continue
-            except Exception as exc:
-                last_exc = exc
-                continue
-        raise RuntimeError(f"Unable to fetch market data for {symbol} from exchanges={self.market_exchange_ids}: {last_exc}")
+    def get_market_data(self, symbol, limit=120):
+        import ccxt
+        exchange = ccxt.kraken()
+
+        if symbol == 'EURUSD':
+            market = 'EUR/USD'
+        elif symbol == 'GBPUSD':
+            market = 'GBP/USD'
+        else:
+            raise Exception("Unknown pair for demo data")
+
+        df = exchange.fetch_ohlcv(market, timeframe='1m', limit=limit)
+        df = pd.DataFrame(df, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        return self.enrich_market_data(df)
 
     def get_multi_timeframe_snapshot(self, symbol, limit=100):
         snapshots = {}
@@ -387,12 +384,6 @@ class PocketOptionBot:
             "mtf_bias": mtf_bias in ("buy", "sell"),
         }
         self.last_signal_profile = signals
-
-    def fetch_account_balance(self):
-        # In real application, fetch via Pocket Option API (or WebSocket/HTTP endpoint if available)
-        # For now, DEMO ONLY!
-        logging.info(f"Simulated balance check: ${self.balance:.2f}")
-        return self.balance
         if signals["liq_grab_down"]:
             buy_score += self.signal_weights["liq_grab_down"]
         if signals["liq_grab_up"]:
@@ -441,6 +432,13 @@ class PocketOptionBot:
             logging.info("Signal=%s buy=%.2f sell=%.2f mtf_bias=%s ai_p_up=%s", direction, buy_score, sell_score, mtf_bias, prob_up)
         return direction
 
+
+    def fetch_account_balance(self):
+        # In real application, fetch via Pocket Option API (or WebSocket/HTTP endpoint if available)
+        # For now, DEMO ONLY!
+        logging.info(f"Simulated balance check: ${self.balance:.2f}")
+        return self.balance
+        
     def load_signal_weights(self):
         defaults = {
             "liq_grab_down": 3.0,
@@ -500,33 +498,6 @@ class PocketOptionBot:
         risk_per_trade = max(abs(entry - stop), 0.0001)
         size = abs(risk_amount / risk_per_trade)
         return round(size, 6)
-
-    
-
-    def analyze_ict(self, df):
-        # ----- MINIMAL ICT/SMART MONEY LOGIC (all-in-one for space) -----
-        # 1. Market Structure: find swing highs/lows
-        df['s_high'] = (df['high'].shift(2) < df['high'].shift(1)) & (df['high'].shift(1) > df['high'])  # peak
-        df['s_low'] = (df['low'].shift(2) > df['low'].shift(1)) & (df['low'].shift(1) < df['low'])
-
-        # 2. FVG scan: identify fair value gaps
-        df['fvg_up'] = (df['low'] > df['high'].shift(2))
-        df['fvg_down'] = (df['high'] < df['low'].shift(2))
-
-        # 3. Session check (basic): only trade London/NY hours UTC
-        now = datetime.datetime.now(datetime.UTC).hour
-        session_ok = (7 <= now <= 17)
-
-        # 4. Signal generation:
-        bullish = any(df['s_low'][-5:]) and any(df['fvg_up'][-3:]) and session_ok
-        bearish = any(df['s_high'][-5:]) and any(df['fvg_down'][-3:]) and session_ok
-
-        signal = None
-        if bullish and not bearish:
-            signal = 'buy'
-        elif bearish and not bullish:
-            signal = 'sell'
-        return signal
 
     def ensure_api_freshness(self):
         # Dummy implementation for demonstration. Real trading bots fetch fresh endpoint config from PO docs or via API gateway
@@ -660,7 +631,6 @@ class PocketOptionBot:
 
         if self.demo_mode:
             # "Place" the trade and simulate instant result (for demo)
-            self.daily_trade_count += 1
             change = np.random.uniform(0.75, 1.15) if direction == 'buy' else np.random.uniform(0.75, 1.15) * -1
             profit = size * change
             self.balance += profit
@@ -706,7 +676,102 @@ class PocketOptionBot:
 
         self.update_signal_weights(self.last_signal_profile, profit > 0)
         logging.info("TRADE %s %s stake=%.2f pnl=%.2f bal=%.2f reward=%.2f", pair, direction.upper(), stake, profit, self.balance, reward)
+    def run(self):
+        logging.info("=== Pocket Option ICT 5-Star Bot (Upgraded Edition) ===")
+        self.sync_balance_from_pocket_option()
 
+        while True:
+            self.reset_daily_trades()
+
+            if self.daily_trade_count >= self.max_trades:
+                logging.info(f"Trade cap hit for today ({self.max_trades} trades). Sleeping until tomorrow.")
+                time.sleep(60 * 60 * 2)
+                continue
+
+            if self.daily_trade_count >= self.max_trades_per_day:
+                logging.info("Daily trade cap reached (%s). Sleeping before next cycle.", self.max_trades_per_day)
+                time.sleep(60 * 30)
+                continue
+
+            if not self.ensure_daily_strategy_review():
+                logging.warning("Strategy review not completed; waiting.")
+                time.sleep(60)
+                continue
+
+            self.ensure_api_freshness()
+
+            if not self.can_trade_by_phase():
+                logging.info("Phase trade cap reached (%s).", self.phase_trade_cap)
+                time.sleep(60 * 30)
+                continue
+
+            if ((self.start_of_day_balance - self.balance) / max(self.start_of_day_balance, 1e-9)) * 100 >= self.max_daily_drawdown_pct:
+                logging.warning("Daily drawdown cap reached.")
+                time.sleep(60 * 30)
+                continue
+
+            if self.last_trade_time is not None:
+                elapsed = datetime.datetime.now(datetime.timezone.utc) - self.last_trade_time
+                if elapsed < datetime.timedelta(minutes=self.trade_cooldown_minutes):
+                    time.sleep(60)
+                    continue
+
+            for pair in self.pairs:
+                if self.daily_trade_count >= self.max_trades_per_day:
+                    logging.info("Daily trade cap reached (%s).", self.max_trades_per_day)
+                    break
+
+                try:
+                    df = self.fetch_market_data_compat(pair, timeframe='1m', limit=max(120, self.market_data_limit))
+                    mtf = self.get_multi_timeframe_snapshot(pair, limit=100)
+
+                    if df is None or len(df) == 0:
+                       logging.warning("Skipping %s: empty market data returned.", pair)
+                       continue
+
+                    if not mtf or any(v is None or len(v) == 0 for v in mtf.values()):
+                        logging.warning("Skipping %s: bad multi-timeframe snapshot.", pair)
+                        continue
+
+                    market_state = self.infer_market_state(df)
+                    hour = int(df['timestamp'].iloc[-1].hour)
+
+                    if not self.apply_month2_filter(pair, market_state, hour):
+                        continue
+
+                    mtf_bias = self.timeframe_bias(mtf)
+                    direction = self.analyze_ict(df, mtf_bias=mtf_bias, log_signal=True)
+                    if not direction:
+                        continue
+
+                    analysis_start = datetime.datetime.now(datetime.timezone.utc)
+                    entry = float(df['close'].iloc[-1])
+                    atr = float(df['atr'].iloc[-1])
+
+                    if np.isnan(atr) or atr <= 0:
+                        continue
+
+                    stop = entry - atr if direction == 'buy' else entry + atr
+                    size = self.risk_size(entry, stop)
+                    entry_setup = 'ICT_MTF_BIAS_AI'
+
+                    if datetime.datetime.now(datetime.timezone.utc) - analysis_start > datetime.timedelta(minutes=self.analysis_timeout_minutes):
+                        logging.warning("Analysis exceeded timeout, skipping trade.")
+                        continue
+
+                    self.execute_trade(pair, direction, size, df.iloc[-1], entry, stop, market_state, entry_setup)
+
+                    if not self.can_trade_by_phase():
+                        break
+
+                    except RuntimeError as exc:
+                        logging.warning("Skipping %s: %s", pair, exc)
+                        continue
+                    except Exception as exc:
+                        logging.exception("Unexpected error while processing %s: %s", pair, exc)
+                        continue
+
+                time.sleep(120)
     def run_backtest(self, bars=800, payout=0.82):
         for pair in self.pairs:
             try:
@@ -738,101 +803,6 @@ class PocketOptionBot:
                 stats = self.performance_metrics(pd.DataFrame(rows))
                 logging.info("%s backtest %s", pair, stats)
 
-    def run(self):
-        logging.info("=== Pocket Option ICT 5-Star Bot (Upgraded Edition) ===")
-        self.sync_balance_from_pocket_option()
-        while True:
-            self.reset_daily_trades()
-            if self.daily_trade_count >= self.max_trades:
-                logging.info(f"Trade cap hit for today ({self.max_trades} trades). Sleeping until tomorrow.")
-                time.sleep(60 * 60 * 2)
-
-            if self.daily_trade_count >= self.max_trades_per_day:
-                logging.info("Daily trade cap reached (%s). Sleeping before next cycle.", self.max_trades_per_day)
-                time.sleep(60 * 30)
-                continue
-
-            if not self.ensure_daily_strategy_review():
-                logging.warning("Strategy review not completed; waiting.")
-                time.sleep(60)
-                continue
-            self.ensure_api_freshness()
-
-            if not self.can_trade_by_phase():
-                logging.info("Phase trade cap reached (%s).", self.phase_trade_cap)
-                time.sleep(60 * 30)
-                continue
-
-            if ((self.start_of_day_balance - self.balance) / max(self.start_of_day_balance, 1e-9)) * 100 >= self.max_daily_drawdown_pct:
-                logging.warning("Daily drawdown cap reached.")
-                time.sleep(60 * 30)
-                continue
-
-            if self.last_trade_time is not None:
-                elapsed = datetime.datetime.now(datetime.timezone.utc) - self.last_trade_time
-                if elapsed < datetime.timedelta(minutes=self.trade_cooldown_minutes):
-                    time.sleep(60)
-                    continue
-
-            for pair in self.pairs:
-                df = self.get_market_data(pair)
-                direction = self.analyze_ict(df)
-                if direction:
-                    entry = df['close'].iloc[-1]
-                    # Stop is 1 ATR below/above for risk calculation (simplified)
-                    atr = df['high'].rolling(14).max().iloc[-1] - df['low'].rolling(14).min().iloc[-1]
-                if self.daily_trade_count >= self.max_trades_per_day:
-                    logging.info("Daily trade cap reached (%s).", self.max_trades_per_day)
-                    break
-
-                try:
-                    df = self.fetch_market_data_compat(pair, timeframe='1m', limit=max(120, self.market_data_limit))
-                    mtf = self.get_multi_timeframe_snapshot(pair, limit=100)
-                    if df is None or len(df) == 0:
-                        logging.warning("Skipping %s: empty market data returned.", pair)
-                        continue
-
-                    market_state = self.infer_market_state(df)
-                    hour = int(df['timestamp'].iloc[-1].hour)
-                    if not self.apply_month2_filter(pair, market_state, hour):
-                        continue
-
-                    mtf_bias = self.timeframe_bias(mtf)
-                    direction = self.analyze_ict(df, mtf_bias=mtf_bias)
-                    if not direction:
-                        continue
-
-                    analysis_start = datetime.datetime.now(datetime.timezone.utc)
-                    entry = float(df['close'].iloc[-1])
-                    atr = float(df['atr'].iloc[-1])
-                    if np.isnan(atr) or atr <= 0:
-                        continue
-                    stop = entry - atr if direction == 'buy' else entry + atr
-                    size = self.risk_size(entry, stop)
-                    if self.daily_trade_count < self.max_trades:
-                        self.trade(pair, direction, size)
-                    if self.daily_trade_count >= self.max_trades:
-                        break
-                    time.sleep(120)  # align with 2min candle (demo frequency)
-                    entry_setup = 'ICT_MTF_BIAS_AI'
-
-                    if datetime.datetime.now(datetime.timezone.utc) - analysis_start > datetime.timedelta(minutes=self.analysis_timeout_minutes):
-                        logging.warning("Analysis exceeded timeout, skipping trade.")
-                        continue
-
-                    self.execute_trade(pair, direction, size, df.iloc[-1], entry, stop, market_state, entry_setup)
-                    if not self.can_trade_by_phase():
-                        break
-                except RuntimeError as exc:
-                    logging.warning("Skipping %s: %s", pair, exc)
-                    continue
-                except Exception as exc:
-                    logging.exception("Unexpected error while processing %s: %s", pair, exc)
-                    continue
-
-            time.sleep(120)
-
-
 def parse_args():
     parser = argparse.ArgumentParser(description="Pocket Option ICT + AI bot")
     parser.add_argument('--mode', choices=['run', 'backtest', 'report'], default='run')
@@ -845,7 +815,7 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
     bot = PocketOptionBot()
-    bot.run()
+
     if args.mode == 'backtest':
         bot.run_backtest(bars=args.bars, payout=args.payout)
     elif args.mode == 'report':
