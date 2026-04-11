@@ -501,20 +501,7 @@ class PocketOptionBot:
         size = abs(risk_amount / risk_per_trade)
         return round(size, 6)
 
-    def get_market_data(self, symbol, limit=120):
-        # Using Binance for free demo candles (substitute with real PO API for production)
-        import ccxt
-        exchange = ccxt.binance()
-        if symbol == 'EURUSD':
-            market = 'EUR/USDT'
-        elif symbol == 'GBPUSD':
-            market = 'GBP/USDT'
-        else:
-            raise Exception("Unknown pair for demo data")
-        df = exchange.fetch_ohlcv(market, timeframe='1m', limit=limit)
-        df = pd.DataFrame(df, columns=['timestamp','open','high','low','close','volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        return df
+    
 
     def analyze_ict(self, df):
         # ----- MINIMAL ICT/SMART MONEY LOGIC (all-in-one for space) -----
