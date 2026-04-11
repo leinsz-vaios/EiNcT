@@ -764,12 +764,12 @@ class PocketOptionBot:
                     if not self.can_trade_by_phase():
                         break
 
-                    except RuntimeError as exc:
-                        logging.warning("Skipping %s: %s", pair, exc)
-                        continue
-                    except Exception as exc:
-                        logging.exception("Unexpected error while processing %s: %s", pair, exc)
-                        continue
+                except RuntimeError as exc:
+                    logging.warning("Skipping %s: %s", pair, exc)
+                    continue
+                except Exception as exc:
+                    logging.exception("Unexpected error while processing %s: %s", pair, exc)
+                    continue
 
                 time.sleep(120)
     def run_backtest(self, bars=800, payout=0.82):
