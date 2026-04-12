@@ -237,6 +237,9 @@ class PocketOptionBot:
             doc_count,
         )
         return True
+    
+    def is_crypto(self, pair):
+        return pair in ['ETHUSD']
 
     def get_market_data(self, symbol, limit=120):
         import ccxt
@@ -246,8 +249,10 @@ class PocketOptionBot:
             market = 'EUR/USD'
         elif symbol == 'GBPUSD':
             market = 'GBP/USD'
+        elif symbol == 'ETHUSD':
+            market = 'ETH/USD'
         else:
-            raise Exception("Unknown pair for demo data")
+            raise Exception(f"Unknown pair for demo data: {symbol}")
 
         df = exchange.fetch_ohlcv(market, timeframe='1m', limit=limit)
         df = pd.DataFrame(df, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -368,6 +373,14 @@ class PocketOptionBot:
 
         buy_score = 0.0
         sell_score = 0.0
+        is_crypto = self.is_crypto(pair) if pair else False
+
+        if is_crypto:
+            rsi_buy = 50 <= latest["rsi"] <= 70
+            rsi_sell = 30 <= latest["rsi"] <= 50
+        else:
+            rsi_buy = 45 <= latest["rsi"] <= 65
+            rsi_sell = 35 <= latest["rsi"] <= 55
         signals = {
             "liq_grab_down": bool(latest["liq_grab_down"]),
             "liq_grab_up": bool(latest["liq_grab_up"]),
@@ -379,8 +392,8 @@ class PocketOptionBot:
             "fvg_down": bool(any(work["fvg_down"].tail(3))),
             "trend_up": bool(latest["ema_fast"] > latest["ema_slow"]),
             "trend_down": bool(latest["ema_fast"] < latest["ema_slow"]),
-            "rsi_buy": bool(45 <= latest["rsi"] <= 65),
-            "rsi_sell": bool(35 <= latest["rsi"] <= 55),
+            "rsi_buy": rsi_buy,
+            "rsi_sell": rsi_sell,
             "mtf_bias": mtf_bias in ("buy", "sell"),
         }
         self.last_signal_profile = signals
@@ -404,6 +417,9 @@ class PocketOptionBot:
             buy_score += self.signal_weights["trend_up"]
         if signals["trend_down"]:
             sell_score += self.signal_weights["trend_down"]
+        if self.is_crypto('ETHUSD'):
+            if latest['atr'] / latest['close'] < 0.002:
+                return None  # skip low volatility    
         if signals["rsi_buy"]:
             buy_score += self.signal_weights["rsi_buy"]
         if signals["rsi_sell"]:
@@ -414,7 +430,12 @@ class PocketOptionBot:
             sell_score += self.signal_weights["mtf_bias"]
 
         direction = None
-        if buy_score >= self.min_signal_score and buy_score > sell_score:
+        min_score = self.min_signal_score
+
+        if self.is_crypto('ETHUSD'):
+            min_score += 1.5  # stricter for crypto
+
+        if buy_score >= min_score and buy_score > sell_score:
             direction = 'buy'
         elif sell_score >= self.min_signal_score and sell_score > buy_score:
             direction = 'sell'
@@ -751,10 +772,10 @@ class PocketOptionBot:
                     if np.isnan(atr) or atr <= 0:
                         continue
 
-                    stop = entry - atr if direction == 'buy' else entry + atr
-                    size = self.risk_size(entry, stop)
-                    entry_setup = 'ICT_MTF_BIAS_AI'
-
+                    if self.is_crypto(pair):
+                        stop = entry - (atr * 1.8) if direction == 'buy' else entry + (atr * 1.8)
+                    else:
+                        stop = entry - atr if direction == 'buy' else entry + atr
                     if datetime.datetime.now(datetime.timezone.utc) - analysis_start > datetime.timedelta(minutes=self.analysis_timeout_minutes):
                         logging.warning("Analysis exceeded timeout, skipping trade.")
                         continue
