@@ -226,9 +226,9 @@ class PocketOptionBot:
             self.start_of_day_balance = self.balance
             self.last_trade_time = None
 
-    def get_market_data(self, symbol, timeframe='1m', limit=120):
+       def get_market_data(self, symbol, timeframe='1m', limit=120):
         exchange = self.exchanges[0]
-
+ 
         if symbol == 'EURUSD':
             market = 'EUR/USD'
         elif symbol == 'GBPUSD':
@@ -236,12 +236,31 @@ class PocketOptionBot:
         elif symbol == 'ETHUSD':
             market = 'ETH/USD'
         else:
-            raise Exception(f"Unknown pair: {symbol}")
+            logging.error(f"Unknown pair: {symbol}")
+            return None
+ 
+        # --- FIX: RETRY LOGIC FOR TIMEOUTS ---
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Set a specific timeout for this call (15 seconds)
+                candles = exchange.fetch_ohlcv(market, timeframe=timeframe, limit=limit)
+                df = pd.DataFrame(candles, columns=self.BASE_OHLCV_COLUMNS)
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                return self.enrich_market_data(df)
 
-        candles = exchange.fetch_ohlcv(market, timeframe=timeframe, limit=limit)
-        df = pd.DataFrame(candles, columns=self.BASE_OHLCV_COLUMNS)
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        return self.enrich_market_data(df)
+            except (ccxt.RequestTimeout, ccxt.NetworkError, ccxt.ExchangeNotAvailable) as e:
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 5
+                    logging.warning(f"Kraken Timeout/Network Error. Attempt {attempt+1}/{max_retries}. Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    logging.error(f"Kraken totally unresponsive after {max_retries} tries. Skipping {symbol}.")
+                    return None # Stop the crash here
+            except Exception as e:
+                logging.error(f"Unexpected error in get_market_data: {e}")
+                return None
+
 
     def enrich_market_data(self, df):
         """Add technical indicators"""
@@ -739,8 +758,9 @@ class PocketOptionBot:
                     df = self.get_market_data(pair, timeframe='1m', limit=240)
                     mtf = self.get_multi_timeframe_snapshot(pair, limit=100)
                     
-                    if df is None or len(df) == 0:
-                        continue
+                    if df is None or df.empty:
+                        logging.warning(f"No data for {pair}, skipping this turn...")
+                        continue  # This prevents the bot from crashing!
                     
                     # Get HTF bias
                     mtf_bias = self.timeframe_bias(mtf)
