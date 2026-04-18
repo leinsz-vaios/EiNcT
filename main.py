@@ -323,8 +323,7 @@ class PocketOptionBot:
         latest_time = pd.to_datetime(latest['timestamp'])
         hour_utc = latest_time.hour
         
-        # --- ADD IT HERE ---
-        print(f"DEBUG: Processing {pair} at {hour_utc}:00 UTC... Filter active: {self.enable_time_filter}")
+        
         # --------------------
         
         # ================================================================

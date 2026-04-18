@@ -1,0 +1,2 @@
+Trade_ID,timestamp,pair,direction,entry,stop,size,profit,balance_after,source,won,Market_State,Time_of_Day,Entry_Setup,Spread_at_Entry,Hold_Minutes,Reward_Score
+1,2026-04-18T07:15:02.332227+00:00,GBPUSD,buy,1.35165,1.35159143,50.0,-50.0,950.0,demo,0,Volatile,7,ICT_HYBRID,2.22,5,-101.11

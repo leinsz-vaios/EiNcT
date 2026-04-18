@@ -1,0 +1,12 @@
+{
+  "liq_sweep_buy": 4.975,
+  "liq_sweep_sell": 5.0,
+  "displacement_up": 2.975,
+  "displacement_down": 3.0,
+  "structure_break_up": 2.975,
+  "structure_break_down": 3.0,
+  "fvg_up": 1.5,
+  "fvg_down": 1.5,
+  "mtf_bias": 2.0,
+  "rsi_zone": 0.975
+}

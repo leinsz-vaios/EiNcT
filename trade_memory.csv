@@ -1,0 +1,2 @@
+rsi,ema_fast,ema_slow,atr,volume,direction,target,market_state,entry_setup,spread_at_entry
+61.538461538451685,1.3515811072189354,1.351587752066801,5.857142857149508e-05,734.2,buy,0,Volatile,ICT_HYBRID,2.2199114387226335
