@@ -226,7 +226,7 @@ class PocketOptionBot:
             self.start_of_day_balance = self.balance
             self.last_trade_time = None
 
-       def get_market_data(self, symbol, timeframe='1m', limit=120):
+    def get_market_data(self, symbol, timeframe='1m', limit=120):
         exchange = self.exchanges[0]
  
         if symbol == 'EURUSD':

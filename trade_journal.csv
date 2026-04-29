@@ -1,2 +1,7 @@
 Trade_ID,timestamp,pair,direction,entry,stop,size,profit,balance_after,source,won,Market_State,Time_of_Day,Entry_Setup,Spread_at_Entry,Hold_Minutes,Reward_Score
 1,2026-04-18T07:15:02.332227+00:00,GBPUSD,buy,1.35165,1.35159143,50.0,-50.0,950.0,demo,0,Volatile,7,ICT_HYBRID,2.22,5,-101.11
+2,2026-04-22T15:08:57+00:00,GBPUSD,buy,1.3516,1.3515,43.19,35.4,899.12,demo,1,Volatile,15,ICT_HYBRID,2.1,5,80.8
+3,2026-04-23T14:56:49+00:00,GBPUSD,sell,1.3514,1.3515,44.96,36.86,935.98,demo,1,Volatile,14,ICT_HYBRID,1.9,5,80.5
+4,2026-04-25T08:00:27+00:00,ETHUSD,sell,2450.5,2451.2,26.47,-26.47,909.51,demo,0,Volatile,8,ICT_HYBRID,3.2,5,-103.2
+5,2026-04-25T13:08:13+00:00,EURUSD,buy,1.0825,1.0824,45.48,37.28,946.79,demo,1,Volatile,13,ICT_HYBRID,1.8,5,81.2
+6,2026-04-25T14:37:42+00:00,EURUSD,sell,1.0827,1.0828,47.34,-47.34,899.45,demo,0,Volatile,14,ICT_HYBRID,2.0,5,-102.0
