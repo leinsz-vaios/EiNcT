@@ -59,9 +59,9 @@ MIN_SIGNAL_SCORE = float(os.getenv('MIN_SIGNAL_SCORE', '4.0'))
 # ====================
 ENABLE_AI_FILTER = os.getenv('ENABLE_AI_FILTER', 'True').lower() == 'true'
 # Change these lines in config.py:
-AI_MODEL_PATH = os.getenv('AI_MODEL_PATH', '/data/trading_brain.pkl')
-TRADE_MEMORY_PATH = os.getenv('TRADE_MEMORY_PATH', '/data/trade_memory.csv')
-TRADE_JOURNAL_PATH = os.getenv('TRADE_JOURNAL_PATH', '/data/trade_journal.csv')
+AI_MODEL_PATH = os.getenv('AI_MODEL_PATH', 'trading_brain.pkl')
+TRADE_MEMORY_PATH = os.getenv('TRADE_MEMORY_PATH', 'trade_memory.csv')
+TRADE_JOURNAL_PATH = os.getenv('TRADE_JOURNAL_PATH', 'trade_journal.csv')
 
 AI_MIN_BUY_PROB = float(os.getenv('AI_MIN_BUY_PROB', '0.55'))
 AI_MAX_SELL_PROB = float(os.getenv('AI_MAX_SELL_PROB', '0.45'))
