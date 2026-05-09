@@ -176,23 +176,11 @@ def calculate_indicators(df: pd.DataFrame, is_crypto: bool = False) -> pd.DataFr
 # ─────────────────────────────────────────────
 
 FEATURE_COLUMNS = [
-    # ── Core (required by main.py) ──
     "rsi",
     "ema_fast",
     "ema_slow",
     "atr",
     "volume",
-    # ── ICT bonus features ──
-    "liq_sweep_buy",
-    "liq_sweep_sell",
-    "displacement_up",
-    "displacement_down",
-    "structure_break_up",
-    "structure_break_down",
-    "fvg_up",
-    "fvg_down",
-    "rsi_buy_zone",
-    "rsi_sell_zone",
 ]
 
 
