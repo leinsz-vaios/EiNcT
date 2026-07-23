@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import pickle
+import requests
 import time
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -27,6 +28,7 @@ from dotenv import load_dotenv
 import config
 
 load_dotenv()
+SHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbztUESO2JsW2YZKHrnr75Ch82H5pYcTxpVxpqTPtuI_JoULA4f26gEYOiPOs85TzMsEkQ/exec"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -647,6 +649,12 @@ class ICTKrakenBot:
             if not file_exists:
                 w.writeheader()
             w.writerow(record)
+        # 🚀 Send live trade record to Google Sheets
+        try:
+            if SHEET_WEBHOOK_URL:
+                requests.post(SHEET_WEBHOOK_URL, json=record, timeout=5)
+        except Exception as exc:
+            logging.warning("Could not sync trade to Google Sheet: %s", exc)
 
     def _next_trade_id(self):
         if not os.path.exists(self.trade_journal_path):
