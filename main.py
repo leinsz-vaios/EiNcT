@@ -16,6 +16,8 @@ import logging
 import os
 import pickle
 import time
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import ccxt
 import numpy as np
@@ -32,6 +34,23 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 
+# ── WEB SERVER FOR RENDER HEALTH CHECK & CRON PINGS ───────────
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"ICT Bot is running!")
+
+    def log_message(self, format, *args):
+        return  # Silence standard HTTP access logs
+
+def start_health_server():
+    port = int(os.getenv("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
+
+threading.Thread(target=start_health_server, daemon=True).start()
+# ───────────────────────────────────────────────────────────────
 
 # ══════════════════════════════════════════════════════════════
 # AI BRAIN
