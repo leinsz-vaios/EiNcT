@@ -120,10 +120,10 @@ class ICTKrakenBot:
 
     # Pair → Kraken Futures contract symbol
     FUTURES_MARKETS = {
-        'EURUSD': 'EUR/USD:USD',
-        'GBPUSD': 'GBP/USD:USD',
-        'ETHUSD': 'ETH/USD:USD',
-        'BTCUSD': 'BTC/USD:USD',
+        'EURUSD': 'PF_EURUSD',
+        'GBPUSD': 'PF_GBPUSD',
+        'ETHUSD': 'PF_ETHUSD',
+        'BTCUSD': 'PF_XBTUSD',
     }
 
     def __init__(self):
